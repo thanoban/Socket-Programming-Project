@@ -1,200 +1,205 @@
-
 import socket
 import threading
 import os
 import sys
+import tkinter as tk
+from tkinter import filedialog, scrolledtext, messagebox
 
-# --- Configuration (MUST CHANGE) ---
-# Replace 'YOUR_AZURE_PUBLIC_IP' with the actual IP address of your Azure VM
-SERVER_HOST = '13.51.170.69'
-SERVER_PORT = 5000  # Must match the port opened in your Azure NSG
-FORMAT = 'utf-8'
-
-# --- Protocol Constants ---
-TEXT_HEADER = "TEXT|"
-FILE_HEADER_PREFIX = "FILE|"
+# --- Configuration ---
+SERVER_HOST = "13.51.170.69"
+SERVER_PORT = 5000
+FORMAT = "utf-8"
 BUFFER_SIZE = 1024
 
-# --- Global Client Variables ---
 client_socket = None
 client_name = ""
 
 
-def receive_handler():
-    """Handles receiving and processing data from the server."""
+# ============================================================
+#  RECEIVE HANDLER
+# ============================================================
+def receive_handler(gui):
+    global client_socket
+
     while True:
         try:
-            # 1. Receive the protocol header from the server
             protocol_header = client_socket.recv(BUFFER_SIZE).decode(FORMAT)
 
             if not protocol_header:
-                # Server disconnected gracefully
-                print("\n[DISCONNECTED] Server closed the connection.")
+                gui.write_chat("\n[DISCONNECTED] Server closed connection.")
                 break
 
-            if protocol_header.startswith(TEXT_HEADER):
-                # --- A. Handle Text Message ---
+            if protocol_header.startswith("TEXT|"):
+                message = client_socket.recv(BUFFER_SIZE).decode(FORMAT)
+                gui.write_chat(f"\n{message}")
 
-                # Receive the full message payload
-                # Note: In a real-world scenario, you'd use a fixed-length header
-                # to know the exact size of the message payload.
-                message_content = client_socket.recv(BUFFER_SIZE).decode(FORMAT)
-                print(f"\n[INCOMING CHAT]: {message_content}")
-
-            elif protocol_header.startswith(FILE_HEADER_PREFIX):
-                # --- B. Handle File Transfer ---
-
-                # Extract filename and size: FILE|filename|filesize
+            elif protocol_header.startswith("FILE|"):
                 parts = protocol_header.split('|')
-                if len(parts) != 3:
-                    print("\n[ERROR] Invalid file header received.")
-                    continue
-
                 filename = parts[1]
                 filesize = int(parts[2])
 
-                print(f"\n[INCOMING FILE] Receiving '{filename}' ({filesize} bytes)...")
+                gui.write_chat(f"\n[Incoming File] {filename} ({filesize} bytes)")
 
-                # Create a file in the current directory
-                with open(filename, 'wb') as f:
-                    received_bytes = 0
-                    while received_bytes < filesize:
-                        # Receive file chunk. Use min() to not read beyond file size.
-                        chunk = client_socket.recv(min(BUFFER_SIZE, filesize - received_bytes))
+                with open(filename, "wb") as f:
+                    received = 0
+                    while received < filesize:
+                        chunk = client_socket.recv(min(BUFFER_SIZE, filesize - received))
                         if not chunk:
                             break
                         f.write(chunk)
-                        received_bytes += len(chunk)
+                        received += len(chunk)
 
-                print(f"[FILE RECEIVED] '{filename}' saved successfully.")
+                gui.write_chat(f"\n[File Saved] {filename}")
 
             else:
-                # Catch-all for server broadcasts (e.g., connection/disconnection messages)
-                print(f"\n[SERVER NOTIFICATION]: {protocol_header}")
+                gui.write_chat(f"\n[SERVER] {protocol_header}")
 
-        except ConnectionResetError:
-            print("\n[CONNECTION LOST] Server abruptly closed the connection.")
-            break
         except Exception as e:
-            print(f"\n[RECEIVE ERROR] An unexpected error occurred: {e}")
+            gui.write_chat(f"\n[ERROR] {e}")
             break
 
-    # Clean exit
     client_socket.close()
-    sys.exit(0)  # Terminate the client program
+    sys.exit(0)
 
 
-def send_file(target_name, filepath):
-    """Sends a file to the server for forwarding to the target."""
+# ============================================================
+#  SEND MESSAGE
+# ============================================================
+def send_message(target, msg):
+    try:
+        client_socket.send(target.encode(FORMAT))
+        client_socket.send("TEXT|".encode(FORMAT))
+        full = f"[{client_name}]: {msg}"
+        client_socket.send(full.encode(FORMAT))
+    except Exception as e:
+        print(f"Error sending message: {e}")
+
+
+# ============================================================
+#  SEND FILE
+# ============================================================
+def send_file(target, filepath, gui):
     if not os.path.isfile(filepath):
-        print(f"Error: File not found at '{filepath}'")
+        gui.write_chat("\n[ERROR] File not found.")
         return
 
     try:
         filesize = os.path.getsize(filepath)
         filename = os.path.basename(filepath)
 
-        # 1. Send Target Name
-        client_socket.send(target_name.encode(FORMAT))
+        client_socket.send(target.encode(FORMAT))
 
-        # 2. Send Protocol Header: FILE|filename|filesize
-        header = f"{FILE_HEADER_PREFIX}{filename}|{filesize}"
+        header = f"FILE|{filename}|{filesize}"
         client_socket.send(header.encode(FORMAT))
 
-        # 3. Send File Payload
-        with open(filepath, 'rb') as f:
-            print(f"Sending file '{filename}' to {target_name}...")
-            # Use sendall for large data to ensure all chunks are sent
+        with open(filepath, "rb") as f:
+            gui.write_chat(f"\nSending {filename}...")
             client_socket.sendall(f.read())
-            print("File transfer complete.")
+            gui.write_chat("\nFile sent.")
 
     except Exception as e:
-        print(f"Error sending file: {e}")
+        gui.write_chat(f"\n[ERROR] {e}")
 
 
-def send_message(target_name, message):
-    """Sends a text message to the server for forwarding to the target."""
-    try:
-        # 1. Send Target Name
-        client_socket.send(target_name.encode(FORMAT))
+# ============================================================
+#  GUI CLASS
+# ============================================================
+class ClientGUI:
+    def __init__(self, master):
+        self.master = master
+        master.title("Socket Client - GUI Version")
+        master.geometry("600x550")
 
-        # 2. Send Protocol Header: TEXT|
-        client_socket.send(TEXT_HEADER.encode(FORMAT))
+        # Chat Area
+        self.chat_area = scrolledtext.ScrolledText(master, wrap=tk.WORD, width=70, height=25)
+        self.chat_area.pack(pady=10)
+        self.chat_area.config(state=tk.DISABLED)
 
-        # 3. Send Message Payload
-        # The server expects the sender's name in the payload
-        full_message = f"[{client_name}]: {message}"
-        client_socket.send(full_message.encode(FORMAT))
-        print(f"Sent: {message} to {target_name}")
+        # Target name
+        self.target_label = tk.Label(master, text="Target Name:")
+        self.target_label.pack()
+        self.target_entry = tk.Entry(master, width=30)
+        self.target_entry.pack()
 
-    except Exception as e:
-        print(f"Error sending message: {e}")
+        # Message Entry
+        self.msg_entry = tk.Entry(master, width=50)
+        self.msg_entry.pack(pady=5)
+
+        # Send Message Button
+        self.send_btn = tk.Button(master, text="Send Message",
+                                  command=self.send_message_command)
+        self.send_btn.pack(pady=5)
+
+        # File Button
+        self.file_btn = tk.Button(master, text="Send File", command=self.send_file_command)
+        self.file_btn.pack(pady=5)
+
+    def write_chat(self, msg):
+        self.chat_area.config(state=tk.NORMAL)
+        self.chat_area.insert(tk.END, msg)
+        self.chat_area.see(tk.END)
+        self.chat_area.config(state=tk.DISABLED)
+
+    def send_message_command(self):
+        target = self.target_entry.get().strip()
+        msg = self.msg_entry.get().strip()
+
+        if not target or not msg:
+            messagebox.showerror("Error", "Target and message required.")
+            return
+
+        send_message(target, msg)
+        self.write_chat(f"\n[You -> {target}]: {msg}")
+
+    def send_file_command(self):
+        target = self.target_entry.get().strip()
+        if not target:
+            messagebox.showerror("Error", "Target name required.")
+            return
+
+        filepath = filedialog.askopenfilename()
+        if filepath:
+            send_file(target, filepath, self)
 
 
-def main():
-    global client_socket
-    global client_name
+# ============================================================
+#  MAIN (CONNECT SCREEN)
+# ============================================================
+def connect_screen():
+    def connect_action():
+        global client_socket, client_name
 
-    # --- Initial Connection Setup ---
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_name = name_entry.get().strip()
+        if not client_name:
+            messagebox.showerror("Error", "Enter a client name.")
+            return
 
-    try:
-        client_socket.connect((SERVER_HOST, SERVER_PORT))
-    except Exception as e:
-        print(f"Failed to connect to server at {SERVER_HOST}:{SERVER_PORT}. Check IP/Port and server status.")
-        print(f"Error: {e}")
-        return
-
-    # 1. Get Client Name and Send to Server
-    client_name = input("Enter your unique client name (e.g., HostA, HostB): ")
-    # The server expects the name as the very first packet
-    client_socket.send(client_name.encode(FORMAT))
-    print(f"\n[CONNECTED] Logged in as {client_name}. Type 'help' for commands.")
-
-    # 2. Start the Receiving Thread
-    # Daemon ensures the thread terminates when the main program exits
-    receive_thread = threading.Thread(target=receive_handler, daemon=True)
-    receive_thread.start()
-
-    # 3. Main Send Loop
-    while True:
         try:
-            command = input(f"\n[{client_name}]> ").strip()
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client_socket.connect((SERVER_HOST, SERVER_PORT))
+            client_socket.send(client_name.encode(FORMAT))
+        except Exception as e:
+            messagebox.showerror("Connection Failed", str(e))
+            return
 
-            if command.lower() == 'help':
-                print("\n--- Commands ---")
-                print("1. Text Chat: **msg <target_name> <your message>**")
-                print("2. File Transfer: **file <target_name> <path/to/file>**")
-                print("3. Quit: **quit**")
-                print("----------------\n")
+        top.destroy()
 
-            elif command.lower().startswith('msg'):
-                parts = command.split(' ', 2)
-                if len(parts) == 3:
-                    send_message(parts[1], parts[2])
-                else:
-                    print("Usage: msg <target_name> <your message>")
+        gui = ClientGUI(root)
 
-            elif command.lower().startswith('file'):
-                parts = command.split(' ', 2)
-                if len(parts) == 3:
-                    send_file(parts[1], parts[2])
-                else:
-                    print("Usage: file <target_name> <path/to/file>")
+        threading.Thread(target=receive_handler, args=(gui,), daemon=True).start()
 
-            elif command.lower() == 'quit':
-                print("Disconnecting...")
-                client_socket.close()
-                break
+    top = tk.Toplevel()
+    top.title("Connect")
+    top.geometry("300x200")
 
-            elif command:
-                print("Invalid command. Type 'help' for options.")
+    tk.Label(top, text="Enter Client Name:").pack(pady=10)
+    name_entry = tk.Entry(top)
+    name_entry.pack(pady=5)
 
-        except EOFError:
-            break
-        except KeyboardInterrupt:
-            break
+    tk.Button(top, text="Connect", command=connect_action).pack(pady=20)
 
 
-if __name__ == "__main__":
-    main()
+root = tk.Tk()
+root.withdraw()
+connect_screen()
+root.mainloop()
