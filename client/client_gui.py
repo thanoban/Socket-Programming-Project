@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import filedialog, scrolledtext, messagebox
 
 # --- Configuration ---
-SERVER_HOST = "13.51.170.69"
+SERVER_HOST = "13.51.170.69"  # Fixed server IP
 SERVER_PORT = 5000
 FORMAT = "utf-8"
 BUFFER_SIZE = 1024
@@ -24,7 +24,6 @@ def receive_handler(gui):
     while True:
         try:
             protocol_header = client_socket.recv(BUFFER_SIZE).decode(FORMAT)
-
             if not protocol_header:
                 gui.write_chat("\n[DISCONNECTED] Server closed connection.")
                 break
@@ -107,32 +106,33 @@ def send_file(target, filepath, gui):
 class ClientGUI:
     def __init__(self, master):
         self.master = master
-        master.title("Socket Client - GUI Version")
-        master.geometry("600x550")
+        master.title(f"Socket Client - {client_name}")
+        master.geometry("650x550")
+        master.configure(bg="#f0f2f5")
 
         # Chat Area
-        self.chat_area = scrolledtext.ScrolledText(master, wrap=tk.WORD, width=70, height=25)
-        self.chat_area.pack(pady=10)
+        self.chat_area = scrolledtext.ScrolledText(master, wrap=tk.WORD, width=75, height=25, bg="#ffffff")
+        self.chat_area.pack(padx=10, pady=10)
         self.chat_area.config(state=tk.DISABLED)
 
-        # Target name
-        self.target_label = tk.Label(master, text="Target Name:")
-        self.target_label.pack()
-        self.target_entry = tk.Entry(master, width=30)
-        self.target_entry.pack()
+        # Target and Message Frame
+        self.frame = tk.Frame(master, bg="#f0f2f5")
+        self.frame.pack(pady=5)
 
-        # Message Entry
-        self.msg_entry = tk.Entry(master, width=50)
-        self.msg_entry.pack(pady=5)
+        tk.Label(self.frame, text="Target Name:", bg="#f0f2f5").grid(row=0, column=0, padx=5, pady=2)
+        self.target_entry = tk.Entry(self.frame, width=20)
+        self.target_entry.grid(row=0, column=1, padx=5, pady=2)
 
-        # Send Message Button
-        self.send_btn = tk.Button(master, text="Send Message",
-                                  command=self.send_message_command)
-        self.send_btn.pack(pady=5)
+        tk.Label(self.frame, text="Message:", bg="#f0f2f5").grid(row=1, column=0, padx=5, pady=2)
+        self.msg_entry = tk.Entry(self.frame, width=50)
+        self.msg_entry.grid(row=1, column=1, padx=5, pady=2)
 
-        # File Button
-        self.file_btn = tk.Button(master, text="Send File", command=self.send_file_command)
-        self.file_btn.pack(pady=5)
+        # Buttons
+        self.send_btn = tk.Button(master, text="Send Message", bg="#4CAF50", fg="white", command=self.send_message_command)
+        self.send_btn.pack(pady=5, ipadx=10, ipady=5)
+
+        self.file_btn = tk.Button(master, text="Send File", bg="#2196F3", fg="white", command=self.send_file_command)
+        self.file_btn.pack(pady=5, ipadx=10, ipady=5)
 
     def write_chat(self, msg):
         self.chat_area.config(state=tk.NORMAL)
@@ -150,6 +150,7 @@ class ClientGUI:
 
         send_message(target, msg)
         self.write_chat(f"\n[You -> {target}]: {msg}")
+        self.msg_entry.delete(0, tk.END)
 
     def send_file_command(self):
         target = self.target_entry.get().strip()
@@ -163,16 +164,18 @@ class ClientGUI:
 
 
 # ============================================================
-#  MAIN (CONNECT SCREEN)
+#  CONNECT SCREEN (ASK ONLY CLIENT NAME)
 # ============================================================
 def connect_screen():
     def connect_action():
         global client_socket, client_name
 
-        client_name = name_entry.get().strip()
-        if not client_name:
-            messagebox.showerror("Error", "Enter a client name.")
+        client_name_input = name_entry.get().strip()
+        if not client_name_input:
+            messagebox.showerror("Error", "Enter client name.")
             return
+
+        client_name = client_name_input
 
         try:
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -185,20 +188,23 @@ def connect_screen():
         top.destroy()
 
         gui = ClientGUI(root)
-
         threading.Thread(target=receive_handler, args=(gui,), daemon=True).start()
 
     top = tk.Toplevel()
-    top.title("Connect")
-    top.geometry("300x200")
+    top.title("Connect to Server")
+    top.geometry("300x150")
+    top.configure(bg="#f0f2f5")
 
-    tk.Label(top, text="Enter Client Name:").pack(pady=10)
-    name_entry = tk.Entry(top)
+    tk.Label(top, text="Enter Client Name:", bg="#f0f2f5").pack(pady=10)
+    name_entry = tk.Entry(top, width=30)
     name_entry.pack(pady=5)
 
-    tk.Button(top, text="Connect", command=connect_action).pack(pady=20)
+    tk.Button(top, text="Connect", bg="#4CAF50", fg="white", command=connect_action).pack(pady=20, ipadx=10, ipady=5)
 
 
+# ============================================================
+#  MAIN
+# ============================================================
 root = tk.Tk()
 root.withdraw()
 connect_screen()
