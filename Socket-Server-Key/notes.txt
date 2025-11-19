@@ -1,1 +1,0 @@
-server public ip=13.51.170.69
